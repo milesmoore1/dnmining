@@ -1,0 +1,7 @@
+.venv/
+.poetry-tools/
+.poetry-cache/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.env

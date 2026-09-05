@@ -1,0 +1,16 @@
+[project]
+name = "dnmining"
+version = "0.1.0"
+description = "Notebook exploration of the REE and coal geodatabase"
+requires-python = ">=3.12,<3.13"
+dynamic = ["dependencies"]
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.13"
+geopandas = "1.1.4"
+pandas = "3.0.5"
+pyogrio = "0.13.0"
+ipykernel = "7.3.0"

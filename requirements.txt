@@ -1,0 +1,5 @@
+# Direct dependencies, matching pyproject.toml. Requires Python 3.12.
+geopandas==1.1.4
+pandas==3.0.5
+pyogrio==0.13.0
+ipykernel==7.3.0
