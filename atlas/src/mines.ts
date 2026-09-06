@@ -3,7 +3,10 @@ import type { Mine, Sample } from "./types";
 export type MineContextFilter = "all" | "current" | "abandoned";
 export type NearbyMine = Mine & { distanceKm: number };
 
-const SEARCH_RADIUS_KM = 25;
+// MSHA coordinates represent a portal or a centrally located pit, not a full
+// footprint. One kilometre is deliberately strict: this is an at-site context
+// signal, not a broad "near mining" heuristic.
+const SEARCH_RADIUS_KM = 1;
 const GRID_DEGREES = 0.25;
 
 function radians(value: number) { return value * Math.PI / 180; }
@@ -36,8 +39,8 @@ function nearbyCandidates(sample: Sample, index: Map<string, Mine[]>) {
   const row = Math.floor(sample.lat / GRID_DEGREES);
   const col = Math.floor(sample.lon / GRID_DEGREES);
   const candidates: Mine[] = [];
-  // At the latitude of Alaska a grid cell is only about 11 km wide. Three cells
-  // in every direction safely covers a 25-km geographic radius nationwide.
+  // Keep a small neighbouring-cell buffer so locations on grid edges still find
+  // the exact 1-km match after the haversine distance check.
   for (let latStep = -3; latStep <= 3; latStep += 1) {
     for (let lonStep = -3; lonStep <= 3; lonStep += 1) {
       candidates.push(...(index.get(`${row + latStep}:${col + lonStep}`) ?? []));

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import AtlasMap from "./AtlasMap";
-import { hasNearbyMine, makeMineIndex, mineType, nearbyMines, type MineContextFilter } from "./mines";
-import type { AtlasData, GeoCollection, Mine, MineData, Prediction, Sample, Split } from "./types";
+import { hasNearbyMine, makeMineIndex, mineType, nearbyMines } from "./mines";
+import type { AtlasData, Mine, MineData, MineStatus, Prediction, Sample, Split, ViewBy } from "./types";
 
 const SCORE_LABEL: Record<Prediction, string> = { high: "Higher prospectivity", low: "Lower prospectivity" };
-const REE_ORDER = ["Nd", "Pr", "Tb", "Dy", "Y"];
+const REE_ORDER = ["La", "Ce", "Nd", "Pr", "Sm", "Gd", "Tb", "Dy", "Ho", "Y"];
 
 function pct(value: number) {
   return `${Math.round(value * 100)}%`;
@@ -36,11 +36,11 @@ function FilterButton<T extends string>({ label, value, current, onChange }: { l
 function ChemStrip({ sample }: { sample: Sample }) {
   const concentrations = REE_ORDER.map((element) => ({ element, value: sample.dl2[element] ?? null }));
   const max = Math.max(1, ...concentrations.map(({ value }) => value ?? 0));
+  const total = concentrations.reduce((sum, { value }) => sum + (value ?? 0), 0);
   return (
     <section className="detail-card chemistry">
-      <div className="eyebrow">Assay signal</div>
       <h3>Rare-earth measurements</h3>
-      <p>DL/2-treated values used in the baseline export; shown as concentration, not a claim of recoverable output.</p>
+      <div className="chemistry__total"><span>Total measured REE</span><strong>{number(total, 1)} <small>ppm</small></strong></div>
       <div className="chemistry__bars">
         {concentrations.map(({ element, value }) => (
           <div className="chemistry__row" key={element}>
@@ -54,14 +54,12 @@ function ChemStrip({ sample }: { sample: Sample }) {
   );
 }
 
-function MineContext({ sample, mineIndex, mineCount }: { sample: Sample; mineIndex: Map<string, Mine[]>; mineCount: number }) {
+function MineContext({ sample, mineIndex }: { sample: Sample; mineIndex: Map<string, Mine[]> }) {
   const nearby = useMemo(() => nearbyMines(sample, mineIndex).slice(0, 3), [sample, mineIndex]);
   return (
     <section className="detail-card mine-context">
-      <div className="eyebrow">MSHA mine context</div>
-      <h3>Nearby named coal-mine records</h3>
-      <p>Nearest MSHA coal-mine records within 25 km ({number(mineCount, 0)} records). These are reported mine locations, not mine boundaries.</p>
-      {nearby.length === 0 ? <p className="mine-empty">No MSHA coal-mine record was found within 25 km.</p> : <div className="mine-list">
+      <h3>At-site MSHA mine record</h3>
+      {nearby.length === 0 ? <p className="mine-empty">No MSHA coal-mine point is within 1 km of this sample.</p> : <div className="mine-list">
         {nearby.map((mine) => <article className="mine-row" key={mine.id}>
           <div className="mine-row__distance">{number(mine.distanceKm, 1)}<small>km</small></div>
           <div><h4>{mine.n ?? "Unnamed MSHA record"}</h4><p>MSHA {mine.id} · {mine.st ?? "Status not reported"} · {mineType(mine.ty)}</p>{mine.o && <p className="mine-row__operator">{mine.o}</p>}</div>
@@ -71,15 +69,13 @@ function MineContext({ sample, mineIndex, mineCount }: { sample: Sample; mineInd
   );
 }
 
-function DetailPanel({ sample, meta, coalFields, mineIndex, mineCount, onClose }: { sample: Sample; meta: AtlasData["meta"]; coalFields: GeoCollection | null; mineIndex: Map<string, Mine[]>; mineCount: number; onClose: () => void }) {
+function DetailPanel({ sample, mineIndex, onClose }: { sample: Sample; mineIndex: Map<string, Mine[]>; onClose: () => void }) {
   const actualTier = sample.tier ? `${sample.tier === "high" ? "Higher" : "Lower"} measured value tier` : "No measured tier";
   const role = sample.split === "test" ? "Held-out test sample" : "Training sample";
-  const mapShapeNote = coalFields ? "A mapped coal-field outline is shown on the map when this coordinate falls inside one. It is field context, not a mine footprint." : "Coal-field outline unavailable.";
   return (
     <aside className="detail" aria-label={`Assessment details for ${sample.id}`}>
       <div className="detail__topline">
         <div>
-          <span className="eyebrow">Selected analysis sample</span>
           <h2>{sample.id}</h2>
           <p>{[sample.county, sample.state].filter(Boolean).join(", ") || "Location unavailable"} · {sample.basin ?? "Basin not assigned"}</p>
         </div>
@@ -91,55 +87,42 @@ function DetailPanel({ sample, meta, coalFields, mineIndex, mineCount, onClose }
         <div>
           <span className={`status status--${sample.pred}`}>{SCORE_LABEL[sample.pred]}</span>
           <h3>{pct(sample.p_high)} predicted probability of the higher-value class</h3>
-          <p>The classifier estimates whether this sample belongs to the model’s top-half REE-value target. It is not a mine viability or recovery decision.</p>
         </div>
       </section>
 
       <section className="detail-card evidence">
-        <div className="eyebrow">ML evidence context</div>
+        <h3>Model record</h3>
         <div className="evidence__grid">
-          <div><span>Role in model</span><strong>{role}</strong></div>
+          <div><span>Predicted class</span><strong>{SCORE_LABEL[sample.pred]}</strong></div>
           <div><span>Observed target</span><strong>{actualTier}</strong></div>
-          <div><span>Training set</span><strong>{number(meta.steps.train_rows, 0)} samples</strong></div>
-          <div><span>Held-out test set</span><strong>{number(meta.steps.test_rows, 0)} samples</strong></div>
+          <div><span>Evaluation cohort</span><strong>{role}</strong></div>
+          <div><span>Whole-coal value</span><strong>{sample.value == null ? "Not reported" : `$${number(sample.value, 2)}/t`}</strong></div>
         </div>
-        <p className="callout"><b>How to read this:</b> use the model-split filter to isolate training or held-out test samples; map symbols intentionally use the same styling for both. Reported test accuracy is {pct(meta.metrics.accuracy)} and ROC AUC is {meta.metrics.auc.toFixed(3)}. {meta.his_caveat}</p>
+      </section>
+
+      <section className="detail-card site-profile">
+        <h3>Sample profile</h3>
+        <div className="site-context__grid">
+          <div><span>Coal basin</span><strong>{sample.basin ?? "Not reported"}</strong></div>
+          <div><span>Coal rank</span><strong>{sample.rank ?? "Not reported"}</strong></div>
+          <div><span>Bed / formation</span><strong>{sample.bed ?? "Not reported"}</strong></div>
+          <div><span>Ash content</span><strong>{sample.ash == null ? "Not reported" : `${number(sample.ash)}%`}</strong></div>
+        </div>
       </section>
 
       <ChemStrip sample={sample} />
 
-      <MineContext sample={sample} mineIndex={mineIndex} mineCount={mineCount} />
-
-      <section className="detail-card site-context">
-        <div className="eyebrow">Location & source context</div>
-        <div className="site-context__grid">
-          <div><span>Coal rank</span><strong>{sample.rank ?? "Not reported"}</strong></div>
-          <div><span>Bed / formation</span><strong>{sample.bed ?? "Not reported"}</strong></div>
-          <div><span>Ash</span><strong>{number(sample.ash)}{sample.ash != null ? "%" : ""}</strong></div>
-          <div><span>Reported thickness</span><strong>{number(sample.thick)}{sample.thick != null ? " in" : ""}</strong></div>
-          <div><span>Baseline whole-coal value</span><strong>{sample.value == null ? "Not reported" : `$${number(sample.value, 2)}/t`}</strong></div>
-          <div><span>Coordinates</span><strong>{sample.lat.toFixed(4)}, {sample.lon.toFixed(4)}</strong></div>
-        </div>
-        <p className="shape-note">{mapShapeNote}</p>
-      </section>
-
-      <section className="detail-card model-inputs">
-        <div className="eyebrow">What the model was given</div>
-        <p>The baseline model learns from trace-element assays, proximate and ultimate coal-quality measurements, geologic descriptors, seam thickness, and location. Individual feature weights are intentionally omitted here: they are global model behavior, not an explanation of this one sample.</p>
-      </section>
+      <MineContext sample={sample} mineIndex={mineIndex} />
     </aside>
   );
 }
 
 export default function App() {
   const [data, setData] = useState<AtlasData | null>(null);
-  const [coalFields, setCoalFields] = useState<GeoCollection | null>(null);
   const [mines, setMines] = useState<Mine[]>([]);
   const [selected, setSelected] = useState<Sample | null>(null);
-  const [prediction, setPrediction] = useState<"all" | Prediction>("all");
+  const [viewBy, setViewBy] = useState<ViewBy>("prospectivity");
   const [split, setSplit] = useState<"all" | Split>("all");
-  const [mineContext, setMineContext] = useState<MineContextFilter>("all");
-  const [state, setState] = useState("all");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -148,26 +131,25 @@ export default function App() {
         if (!response.ok) throw new Error("The baseline sample export could not be loaded.");
         return response.json() as Promise<AtlasData>;
       }),
-      fetch("/coalfields2.geojson").then((response) => response.ok ? response.json() as Promise<GeoCollection> : null),
       fetch("/mines.json").then((response) => response.ok ? response.json() as Promise<MineData> : null),
-    ]).then(([atlas, fields, mineData]) => {
+    ]).then(([atlas, mineData]) => {
       setData(atlas);
-      setCoalFields(fields);
       setMines(mineData?.mines ?? []);
     }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Unable to load Atlas data."));
   }, []);
 
-  const states = useMemo(() => Array.from(new Set(data?.samples.map((sample) => sample.state).filter((value): value is string => Boolean(value)) ?? [])).sort(), [data]);
   const samplesById = useMemo(() => new Map(data?.samples.map((sample) => [sample.id, sample]) ?? []), [data]);
   const mineIndex = useMemo(() => makeMineIndex(mines), [mines]);
+  const mineStatusById = useMemo(() => new Map<string, MineStatus>((data?.samples ?? []).map((sample) => {
+    const status: MineStatus = hasNearbyMine(sample, mineIndex, "current") ? "current" : hasNearbyMine(sample, mineIndex, "abandoned") ? "abandoned" : "none";
+    return [sample.id, status];
+  })), [data, mineIndex]);
   const filtered = useMemo(
     () => (data?.samples ?? []).filter((sample) =>
-      (prediction === "all" || sample.pred === prediction) &&
       (split === "all" || sample.split === split) &&
-      (state === "all" || sample.state === state) &&
-      (mineContext === "all" || hasNearbyMine(sample, mineIndex, mineContext)),
+      (viewBy !== "mine" || (mineStatusById.get(sample.id) ?? "none") !== "none"),
     ),
-    [data, prediction, split, state, mineContext, mineIndex],
+    [data, split, viewBy, mineStatusById],
   );
 
   if (error) return <main className="loading"><div><span className="eyebrow">Atlas unavailable</span><h1>Data could not load</h1><p>{error}</p></div></main>;
@@ -175,41 +157,39 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <AtlasMap samples={filtered} allSamplesById={samplesById} coalFields={coalFields} selected={selected} onSelect={setSelected} />
+      <AtlasMap samples={filtered} allSamplesById={samplesById} selected={selected} viewBy={viewBy} mineStatusById={mineStatusById} onSelect={setSelected} />
       <header className="masthead panel">
-        <div className="brand-mark" aria-hidden="true">A</div>
         <div>
-          <div className="eyebrow">DN Mining · baseline model</div>
-          <h1>REE Prospectivity Atlas</h1>
-          <p>Interactive analysis samples, not mine inventory or resource estimates.</p>
+          <h1>REE Prospectivity</h1>
         </div>
       </header>
 
       <section className="model-card panel" aria-label="Model summary">
-        <div className="model-card__top"><span className="eyebrow">Model snapshot</span><span className="model-badge">XGBoost</span></div>
+        <div className="model-card__top"><span>Baseline model</span><span className="model-badge">XGBoost</span></div>
         <div className="model-card__metrics">
           <div><strong>{number(data.meta.steps.labeled_rows, 0)}</strong><span>labeled samples</span></div>
           <div><strong>{pct(data.meta.metrics.accuracy)}</strong><span>test accuracy</span></div>
           <div><strong>{data.meta.metrics.auc.toFixed(3)}</strong><span>ROC AUC</span></div>
         </div>
-        <p>Training: <b>{number(data.meta.steps.train_rows, 0)}</b> · Held-out test: <b>{number(data.meta.steps.test_rows, 0)}</b>. Use the split filter to compare them.</p>
+        <p>Training: <b>{number(data.meta.steps.train_rows, 0)}</b> · Held-out test: <b>{number(data.meta.steps.test_rows, 0)}</b></p>
       </section>
 
       <section className="filters panel" aria-label="Map filters">
-        <div className="filter-heading"><span className="eyebrow">Display</span><strong>{number(filtered.length, 0)} shown</strong></div>
-        <div className="filter-block"><label>Predicted class</label><div className="segmented"><FilterButton label="All" value="all" current={prediction} onChange={setPrediction} /><FilterButton label="Higher" value="high" current={prediction} onChange={setPrediction} /><FilterButton label="Lower" value="low" current={prediction} onChange={setPrediction} /></div></div>
-        <div className="filter-block"><label>Model split</label><div className="segmented"><FilterButton label="All" value="all" current={split} onChange={setSplit} /><FilterButton label="Training" value="train" current={split} onChange={setSplit} /><FilterButton label="Test" value="test" current={split} onChange={setSplit} /></div></div>
-        <div className="filter-block"><label>Nearby MSHA mine (25 km)</label><div className="segmented"><FilterButton label="All" value="all" current={mineContext} onChange={setMineContext} /><FilterButton label="Current" value="current" current={mineContext} onChange={setMineContext} /><FilterButton label="Abandoned" value="abandoned" current={mineContext} onChange={setMineContext} /></div></div>
-        <label className="select-label">State<select value={state} onChange={(event) => setState(event.target.value)}><option value="all">All states</option>{states.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+        <div className="filter-heading"><span className="eyebrow">Map view</span><strong>{number(filtered.length, 0)} sites</strong></div>
+        <div className="filter-block"><label>View by</label><div className="segmented"><FilterButton label="Prospectivity" value="prospectivity" current={viewBy} onChange={setViewBy} /><FilterButton label="Coal mines" value="mine" current={viewBy} onChange={setViewBy} /></div></div>
+        <div className="filter-block"><label>Evaluation cohort</label><div className="segmented"><FilterButton label="All" value="all" current={split} onChange={setSplit} /><FilterButton label="Training" value="train" current={split} onChange={setSplit} /><FilterButton label="Test" value="test" current={split} onChange={setSplit} /></div></div>
       </section>
 
-      <section className="legend panel" aria-label="Map legend">
-        <div><i className="legend-dot legend-dot--high" /> Higher prospectivity</div>
-        <div><i className="legend-dot legend-dot--low" /> Lower prospectivity</div>
-        <div><i className="legend-dot legend-dot--site" /> Individual sites · no count clustering</div>
-      </section>
+      <Legend viewBy={viewBy} />
 
-      {selected && <DetailPanel sample={selected} meta={data.meta} coalFields={coalFields} mineIndex={mineIndex} mineCount={mines.length} onClose={() => setSelected(null)} />}
+      {selected && <DetailPanel sample={selected} mineIndex={mineIndex} onClose={() => setSelected(null)} />}
     </main>
   );
+}
+
+function Legend({ viewBy }: { viewBy: ViewBy }) {
+  const items = viewBy === "prospectivity"
+    ? [["high", "Higher prospectivity"], ["low", "Lower prospectivity"]]
+    : [["mine-current", "Current coal mine at site"], ["mine-abandoned", "Abandoned coal mine at site"]];
+  return <section className="legend panel" aria-label="Map legend">{items.map(([kind, label]) => <div key={kind}><i className={`legend-dot legend-dot--${kind}`} /> {label}</div>)}</section>;
 }

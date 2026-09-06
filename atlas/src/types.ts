@@ -1,5 +1,7 @@
 export type Prediction = "high" | "low";
 export type Split = "train" | "test";
+export type ViewBy = "prospectivity" | "mine";
+export type MineStatus = "current" | "abandoned" | "none";
 
 export type Sample = {
   id: string;
