@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Miles's pipeline — 3D terrain baseline (deck.gl + MapLibre)</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/deck.gl@9.0.38/dist.min.js"></script>
+<script src="https://unpkg.com/d3@7/dist/d3.min.js"></script>
+<style>
+  :root{ --bg:#12140f; --panel:#1b1e17; --ink:#eceadf; --mut:#9a978a; --line:#33372c; --accent:#5598e7; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:13px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  #app{display:grid;grid-template-columns:1fr 360px;grid-template-rows:1fr auto;height:100vh}
+  #map{grid-row:1;grid-column:1;position:relative;background:#dfe6ea}
+  #side{grid-row:1;grid-column:2;background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;padding:12px 14px}
+  #caption{grid-row:2;grid-column:1/3;background:#0c0d09;border-top:1px solid var(--line);padding:7px 14px;font-size:11.5px;color:var(--mut)}
+  #caption b{color:var(--ink)}
+  h1{font-size:15px;margin:2px 0 2px}
+  .sub{color:var(--mut);font-size:11px;margin-bottom:8px}
+  .grp{border-top:1px solid var(--line);padding:10px 0}
+  .grp h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin:0 0 7px}
+  .metrics{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .metric{background:#242820;border:1px solid var(--line);border-radius:5px;padding:6px 8px}
+  .metric b{font-size:18px;color:var(--accent)}.metric span{display:block;font-size:10px;color:var(--mut)}
+  .cm{font-size:11px;margin-top:6px}
+  .cm table{border-collapse:collapse}.cm td,.cm th{border:1px solid var(--line);padding:3px 8px;text-align:center}
+  .feats{font-size:11.5px}.feats .row{display:flex;align-items:center;gap:6px;margin:2px 0}
+  .feats .bar{height:9px;background:var(--accent);border-radius:2px}
+  #legend{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mut);margin-top:6px}
+  #legbar{height:10px;flex:1;border-radius:3px;background:linear-gradient(90deg,#440154,#3b528b,#21918c,#5ec962,#fde725)}
+  .none{color:var(--mut);font-style:italic}
+  .hd{display:flex;align-items:baseline;gap:10px;margin:4px 0}
+  .hd .big{font-size:26px;font-weight:700;color:var(--accent)}
+  .pill{font-size:10px;border-radius:3px;padding:1px 6px;font-weight:600}
+  .pill.high{background:#d7191c;color:#fff}.pill.low{background:#2c7bb6;color:#fff}
+  .pill.test{background:#3a3f30;color:#cfc}.pill.train{background:#2a2d22;color:#9a978a}
+  .geo{font-size:11.5px;color:var(--mut)}.geo b{color:var(--ink)}
+  table.el{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px}
+  table.el th,table.el td{text-align:right;padding:2px 4px;border-bottom:1px solid #23261e}
+  table.el th:first-child,table.el td:first-child{text-align:left}
+  tr.top td{color:var(--accent)}
+  details summary{cursor:pointer;color:var(--mut);font-size:11px;margin-top:8px}
+  #ctrls{position:absolute;z-index:5;top:10px;right:10px;display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+  #ctrls .seg{display:flex;background:#1b1e17e6;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  #ctrls .seg button{background:transparent;color:var(--ink);border:0;border-left:1px solid var(--line);
+    padding:6px 9px;cursor:pointer;font-size:11.5px}
+  #ctrls .seg button:first-child{border-left:0}
+  #ctrls .seg button.on{background:var(--accent);color:#04121f;font-weight:600}
+  #ctrls .btn{background:#1b1e17e6;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 10px;cursor:pointer;font-size:11.5px}
+  #ctrls label.chk{background:#1b1e17e6;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 9px;font-size:11px;cursor:pointer;display:flex;gap:6px;align-items:center}
+  #err{position:absolute;z-index:9999;top:8px;left:8px;background:#5a1414;color:#fff;padding:8px 10px;border-radius:5px;max-width:55%;display:none}
+  .maplibregl-ctrl-attrib{font-size:9px}
+  /* geoscience slide-over */
+  #geo{position:absolute;inset:0;z-index:20;background:rgba(8,9,7,0.72);backdrop-filter:blur(2px);
+    display:none;overflow:auto;padding:14px 16px 20px}
+  #geo.show{display:block}
+  .geohd{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:10px}
+  .geohd b{font-size:15px;color:#fff}.geohd .meta{font-size:11px;color:#b7b4a8}
+  #geoclose{background:#242820;color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:6px 12px;cursor:pointer}
+  .geogrid{display:grid;grid-template-columns:1.35fr 1fr;grid-auto-rows:min-content;gap:12px}
+  .gp{background:#fbfbf8;color:#161613;border:1px solid #d9d7cc;border-radius:7px;padding:10px 12px}
+  .gp.wide{grid-column:1/3}
+  .gp h3{margin:0 0 2px;font-size:12.5px;color:#161613}
+  .gp .cap{font-size:10.5px;color:#5a584f;margin-bottom:4px}
+  .gp text{font-family:inherit}
+  table.idx{width:100%;border-collapse:collapse;font-size:11.5px}
+  table.idx th,table.idx td{padding:3px 6px;border-bottom:1px solid #e6e4d9;text-align:right}
+  table.idx th:first-child,table.idx td:first-child{text-align:left}
+  table.idx td.na{color:#a19e93;font-style:italic}
+  .cflag{color:#c0392b;font-weight:700}
+  .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:3px}
+  .geo-open{margin-top:10px;width:100%;background:#5598e7;color:#04121f;border:0;border-radius:6px;padding:8px;font-weight:600;cursor:pointer;font-size:12.5px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="map">
+    <div id="ctrls">
+      <div class="seg" id="bmseg">
+        <button data-m="terrain" class="on">Terrain</button>
+        <button data-m="imagery">Imagery</button>
+        <button data-m="imagery-labels">Imagery + labels</button>
+      </div>
+      <div class="seg" id="pitchseg">
+        <button data-p="3d" class="on">3D</button>
+        <button data-p="2d">2D</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="autoimg" checked/> Auto-imagery when zoomed in</label>
+      <label class="chk"><input type="checkbox" id="tmines" checked/> Mine density</label>
+      <select id="minefilter" class="btn"><option value="all">All mines</option><option value="abandoned">Abandoned + sealed</option><option value="active">Active only</option></select>
+      <label class="chk"><input type="checkbox" id="tbasins" checked/> Basin outlines</label>
+      <select id="basinsel" class="btn"><option value="">Fly to basin…</option></select>
+      <button class="btn" id="reset">⟲ reset view</button>
+    </div>
+    <div id="err"></div>
+    <div id="geo">
+      <div class="geohd">
+        <div><b id="geotitle">Geoscience analysis</b> <span class="meta" id="geometa"></span></div>
+        <button id="geoclose">✕ close</button>
+      </div>
+      <div class="geogrid">
+        <div class="gp wide"><h3>1 · Chondrite-normalized REE spidergram</h3>
+          <div class="cap" id="spidercap"></div><div id="p_spider"></div></div>
+        <div class="gp"><h3>2 · Geochemical indices — FACE vs DL/2</h3>
+          <div class="cap">Indices computed partly from detection-limit (censored) values marked <span class="cflag">‡</span>.</div>
+          <div id="p_indices"></div></div>
+        <div class="gp"><h3>4 · Population context</h3>
+          <div class="cap" id="popcap"></div><div id="p_pop"></div></div>
+        <div class="gp wide"><h3>3 · Provenance &amp; discrimination context</h3>
+          <div class="cap">Selection (◆) against the 5,605-sample population, coloured by basin. DL/2 treatment.</div>
+          <div id="p_context"></div></div>
+      </div>
+    </div>
+  </div>
+  <div id="side">
+    <h1>Miles's pipeline — 3D terrain</h1>
+    <div class="sub" id="subline"></div>
+    <div class="grp">
+      <h2>His model — random holdout</h2>
+      <div class="metrics">
+        <div class="metric"><b id="m_acc">–</b><span>accuracy (test)</span></div>
+        <div class="metric"><b id="m_auc">–</b><span>ROC AUC</span></div>
+      </div>
+      <div class="cm" id="cm"></div>
+      <div class="sub" id="balance" style="margin-top:6px"></div>
+    </div>
+    <div class="grp">
+      <h2>His top features (XGBoost gain)</h2>
+      <div class="feats" id="feats"></div>
+    </div>
+    <div class="grp">
+      <h2>Height &amp; colour = predicted P(top-50% REE)</h2>
+      <div id="legend"><span>0</span><div id="legbar"></div><span>1</span></div>
+      <div class="sub" style="margin-top:6px">Extruded hexagons aggregate his samples (mean P(high)); above zoom 6 they fade to individual points draped on the terrain. One treatment (DL/2). Aggregation only, no interpolation.</div>
+      <div class="sub" style="margin-top:6px;color:#7f7c70">Elevation: AWS Terrain Tiles (SRTM/NED-derived). Imagery: Esri World Imagery. Basemap gray/hillshade/reference: Esri. <b>Not LIDAR.</b></div>
+    </div>
+    <div class="grp" id="basinbox" style="display:none">
+      <h2>Basin (analysis Region)</h2>
+      <div class="sub" id="basinstats"></div>
+      <div class="sub" style="margin-top:4px;color:#7f7c70">Extent = convex hull of this basin's samples. Named basins are the analysis <b>Region</b> field; geodatabase polygon layers carry no names, so hulls stand in for boundaries. Faint outlines = geodatabase coal fields (unnamed, do not match the 24 Regions 1:1).</div>
+    </div>
+    <div class="grp" id="panel">
+      <h2>Sample</h2>
+      <div class="none">Click a hexagon or point (zoom in for individual samples).</div>
+    </div>
+    <div class="grp">
+      <h2>Mines (MSHA)</h2>
+      <div class="sub" id="minelegend"></div>
+    </div>
+  </div>
+  <div id="caption"></div>
+</div>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+function showErr(m){const e=$("#err");e.style.display="block";e.textContent="⚠ "+m;console.error(m);}
+window.addEventListener("error",e=>showErr(e.message));
+
+let DATA,META,TOPF=[],map,overlay,coalGeo=null;
+let GEO=null,GMETA=null,POP=[];
+let MINES=null,BASINS=null,showMines=true,showBasins=true,selBasin=null,mineFilter="all";
+const AMBER=[[254,232,200],[253,212,158],[253,187,132],[247,150,70],[214,110,30],[150,70,10]];
+let userBasemap="terrain", appliedBasemap=null, autoImagery=true;
+const HOME={center:[-95,38],zoom:3.7,pitch:48,bearing:-18};
+const VIRIDIS=[[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
+function lerp(a,b,t){return a+(b-a)*t;}
+function colorFor(p){const t=Math.max(0,Math.min(1,p)),seg=t*(VIRIDIS.length-1),i=Math.floor(seg),f=seg-i;
+  const a=VIRIDIS[i],b=VIRIDIS[Math.min(i+1,VIRIDIS.length-1)];
+  return [Math.round(lerp(a[0],b[0],f)),Math.round(lerp(a[1],b[1],f)),Math.round(lerp(a[2],b[2],f))];}
+const COLOR_RANGE=[[68,1,84],[59,82,139],[33,145,140],[94,201,98],[173,220,66],[253,231,37]];
+
+// per-sample terrain elevation, cached once terrain returns a value (display-only; no data change)
+function zFor(d){
+  if(d.__z!=null) return d.__z;
+  const e=(map&&map.queryTerrainElevation)?map.queryTerrainElevation([d.lon,d.lat],{exaggerated:true}):null;
+  if(e!=null && isFinite(e)){ d.__z=e; return e; }
+  return 0;
+}
+
+// ---------- deck layers ----------
+function coalLayer(){
+  if(!coalGeo) return null;
+  return new deck.GeoJsonLayer({id:"coal",data:coalGeo,stroked:true,filled:true,
+    getLineColor:[90,86,70,150],getFillColor:[150,146,120,16],lineWidthMinPixels:1,pickable:false});
+}
+function hexLayer(op){
+  return new deck.HexagonLayer({id:"hex",data:DATA,
+    getPosition:d=>[d.lon,d.lat],
+    radius:26000, coverage:0.92, extruded:true,
+    elevationScale:95000, elevationRange:[0,1],
+    colorAggregation:"MEAN", getColorWeight:d=>d.p_high, colorDomain:[0,1], colorRange:COLOR_RANGE,
+    elevationAggregation:"MEAN", getElevationWeight:d=>d.p_high,
+    opacity:op, pickable:true,
+    material:{ambient:0.45,diffuse:0.65,shininess:24,specularColor:[40,40,40]},
+    onSetElevationDomain:d=>{window.__elevDomain=d;},
+    onClick:info=>{const pts=info&&info.object&&info.object.points;if(pts&&pts.length){
+      let best=pts[0].source||pts[0],bv=-1;
+      for(const pp of pts){const s=pp.source||pp;if(s.p_high>bv){bv=s.p_high;best=s;}}
+      selectSample(best);}}});
+}
+function scatterLayer(op){
+  return new deck.ScatterplotLayer({id:"pts",data:DATA,
+    getPosition:d=>[d.lon,d.lat,zFor(d)],           // draped on terrain surface
+    getFillColor:d=>colorFor(d.p_high),getLineColor:[15,15,15,200],lineWidthMinPixels:0.5,stroked:true,
+    radiusUnits:"pixels",getRadius:5,radiusMinPixels:3,radiusMaxPixels:8,
+    opacity:op,pickable:true,
+    onClick:info=>{if(info&&info.object)selectSample(info.object);}});
+}
+// ---- mine DENSITY surface (background stratum) + basins ----
+function minesFiltered(){
+  if(!MINES)return [];
+  if(mineFilter==="active") return MINES.filter(m=>m.st==="Active");
+  if(mineFilter==="abandoned") return MINES.filter(m=>m.st==="Abandoned"||m.st==="Abandoned and Sealed");
+  return MINES;
+}
+function mineLayer(){
+  const data=minesFiltered();
+  if(deck.HeatmapLayer){
+    return new deck.HeatmapLayer({id:"mines",data,
+      getPosition:d=>[d.lon,d.lat], getWeight:d=>(d.e&&d.e>0)?d.e:1,
+      aggregation:"SUM", radiusPixels:36, intensity:1, threshold:0.04,
+      colorRange:AMBER, opacity:0.5, pickable:false});
+  }
+  // fallback if HeatmapLayer smears/absent
+  return new deck.ScreenGridLayer({id:"mines",data,getPosition:d=>[d.lon,d.lat],
+    getWeight:d=>(d.e&&d.e>0)?d.e:1, cellSizePixels:22, opacity:0.5, colorRange:AMBER, pickable:false});
+}
+function basinLayer(){ if(!BASINS)return null;
+  return new deck.GeoJsonLayer({id:"basins",data:BASINS,stroked:true,filled:true,
+    getFillColor:f=>f.properties.basin===selBasin?[85,152,231,45]:[120,140,120,16],
+    getLineColor:f=>f.properties.basin===selBasin?[85,152,231,235]:[90,110,90,150],
+    getLineWidth:f=>f.properties.basin===selBasin?2.5:1, lineWidthUnits:"pixels",
+    pickable:true, onClick:info=>{if(info&&info.object)selectBasin(info.object.properties.basin);}});
+}
+function basinLabelLayer(){ if(!BASINS)return null;
+  return new deck.TextLayer({id:"blabels",data:BASINS.features,
+    getPosition:f=>[f.properties.cx,f.properties.cy], getText:f=>f.properties.basin,
+    getSize:11, getColor:[35,35,30,230], fontWeight:600,
+    getTextAnchor:"middle", getAlignmentBaseline:"center",
+    background:true, getBackgroundColor:[255,255,255,170], backgroundPadding:[3,1], billboard:true});
+}
+function haversine(la1,lo1,la2,lo2){const R=6371,t=Math.PI/180,dLa=(la2-la1)*t,dLo=(lo2-lo1)*t,
+  a=Math.sin(dLa/2)**2+Math.cos(la1*t)*Math.cos(la2*t)*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(a));}
+function bearing(la1,lo1,la2,lo2){const t=Math.PI/180,y=Math.sin((lo2-lo1)*t)*Math.cos(la2*t),
+  x=Math.cos(la1*t)*Math.sin(la2*t)-Math.sin(la1*t)*Math.cos(la2*t)*Math.cos((lo2-lo1)*t);
+  return ["N","NE","E","SE","S","SW","W","NW"][Math.round(((Math.atan2(y,x)*180/Math.PI+360)%360)/45)%8];}
+function nearestMines(lat,lon,km,k){ if(!MINES)return [];
+  const out=[]; for(const m of MINES){const d=haversine(lat,lon,m.lat,m.lon);if(d<=km)out.push({m,d});}
+  out.sort((a,b)=>a.d-b.d); return out.slice(0,k);}
+function bboxOf(feat){ let w=180,s=90,e=-180,n=-90;
+  (function walk(cs){for(const c of cs){if(Array.isArray(c[0]))walk(c);
+    else{w=Math.min(w,c[0]);e=Math.max(e,c[0]);s=Math.min(s,c[1]);n=Math.max(n,c[1]);}}})(feat.geometry.coordinates);
+  return [[w,s],[e,n]];}
+function selectBasin(b){
+  selBasin=b||null; const sel=$("#basinsel"); if(sel&&sel.value!==(b||"")) sel.value=b||"";
+  if(b&&BASINS){ const f=BASINS.features.find(x=>x.properties.basin===b);
+    if(f) map.fitBounds(bboxOf(f),{padding:70,pitch:HOME.pitch,bearing:HOME.bearing,duration:1600});
+    const ss=DATA.filter(x=>x.basin===b), ph=ss.map(x=>x.p_high).filter(v=>v!=null),
+      vv=ss.map(x=>x.value).filter(v=>v!=null).sort((a,c)=>a-c);
+    const mean=ph.length?ph.reduce((a,c)=>a+c,0)/ph.length:null, med=vv.length?vv[vv.length>>1]:null;
+    $("#basinstats").innerHTML=`<b>${b}</b><br/>${ss.length} samples · mean P(high) <b>${mean!=null?(mean*100).toFixed(0)+'%':'—'}</b> · median value <b>$${med!=null?med.toFixed(1):'—'}/t</b>`;
+    $("#basinbox").style.display="block";
+  } else { $("#basinbox").style.display="none"; }
+  updateLayers();
+}
+function buildBasinSelect(){
+  const sel=$("#basinsel"); if(!sel||!BASINS)return;
+  BASINS.features.map(f=>f.properties.basin).sort().forEach(b=>{
+    const o=document.createElement("option"); o.value=b; o.textContent=b; sel.appendChild(o);});
+}
+function buildMineLegend(){
+  const host=$("#minelegend"); if(!host)return;
+  if(!MINES){ host.textContent="mine layer unavailable"; return; }
+  let a=0,ab=0,se=0; for(const m of MINES){ if(m.st==="Active")a++; else if(m.st==="Abandoned")ab++; else if(m.st==="Abandoned and Sealed")se++; }
+  const ramp="background:linear-gradient(90deg,rgba(254,232,200,.25),rgb(253,187,132),rgb(247,150,70),rgb(150,70,10))";
+  host.innerHTML=`<b>MSHA coal mine density — ${MINES.length.toLocaleString()} sites</b> `+
+    `(${a} active, ${ab.toLocaleString()} abandoned, ${se.toLocaleString()} sealed).`+
+    `<div style="height:10px;border-radius:3px;margin:5px 0;${ramp}"></div>`+
+    `A <b>density surface</b> (amber), not individual mine locations — a map of where America has mined coal. `+
+    `Weighted by employees where present. <b>Coal only</b> (metal &amp; nonmetal excluded). `+
+    `Drawn beneath the samples, which stay dominant. Nearest individual mines still list in the click panel.`;
+}
+
+function updateLayers(){
+  if(!overlay)return;
+  const z=map.getZoom();
+  const scatterOp=Math.max(0,Math.min(1,z-6));   // crossfade over zoom 6->7
+  const hexOp=1-scatterOp;
+  const layers=[];
+  const c=coalLayer(); if(c)layers.push(c);                 // 2 · faint coal-field outlines
+  if(showBasins){ const bl=basinLayer(); if(bl)layers.push(bl); }
+  if(showMines && MINES) layers.push(mineLayer());          // 3 · mine density surface (all zooms)
+  if(hexOp>0.01)layers.push(hexLayer(hexOp));               // 4 · samples — always on top, brightest
+  if(scatterOp>0.01)layers.push(scatterLayer(scatterOp));
+  if(showBasins){ const ll=basinLabelLayer(); if(ll)layers.push(ll); }
+  window.__activeLayerIds=layers.map(l=>l.id);
+  overlay.setProps({layers});
+}
+function tooltip({object,layer}){
+  if(!object)return null;
+  const st={background:"#1b1e17",color:"#eceadf",fontSize:"11px",padding:"5px 7px",borderRadius:"4px"};
+  if(layer&&layer.id==="mines"){
+    const cm={B:"Bituminous",A:"Anthracite",L:"Lignite","?":"coal"}[object.cm];
+    const ty={S:"Surface",U:"Underground",F:"Facility"}[object.ty];
+    return {html:`<b>${object.n||object.id}</b><br/>${object.o||'—'}<br/>${object.st||'—'} · ${ty} · ${cm}`+
+      `<br/>${object.cty||''} ${object.stt||''}${object.e?(' · '+object.e+' emp'):''}`,style:st};
+  }
+  if(layer&&layer.id==="basins"){
+    return {html:`<b>${object.properties.basin}</b><br/>${object.properties.n} samples (analysis basin extent)`,style:st};
+  }
+  if(layer&&layer.id==="hex"){
+    const n=object.points?object.points.length:0;
+    const mean=(object.colorValue!=null?object.colorValue:object.elevationValue);
+    return {html:`<b>${n}</b> samples<br/>mean P(high): <b>${(mean*100).toFixed(0)}%</b>`,style:st};
+  }
+  return {html:`<b>${object.id||"sample"}</b><br/>P(high): <b>${(object.p_high*100).toFixed(0)}%</b>`,style:st};
+}
+
+// ---------- basemap switching (raster layer visibility) ----------
+function applyBasemap(mode){
+  if(!map||appliedBasemap===mode) return;
+  const vis=(id,on)=>{ if(map.getLayer(id)) map.setLayoutProperty(id,"visibility",on?"visible":"none"); };
+  const terrain=mode==="terrain", imagery=(mode==="imagery"||mode==="imagery-labels");
+  vis("esri_lightgray",terrain); vis("esri_hillshade",terrain);
+  vis("esri_imagery",imagery); vis("esri_reference",mode==="imagery-labels");
+  appliedBasemap=mode; window.__appliedBasemap=mode;
+}
+function desiredBasemap(){
+  return (autoImagery && map.getZoom()>=10) ? "imagery-labels" : userBasemap;
+}
+function refreshBasemap(){ applyBasemap(desiredBasemap()); }
+
+// ---------- sidebar / panel / caption (unchanged) ----------
+function selectSample(s){
+  const feat=s.feat||{},dl2=s.dl2||{};
+  const topset=new Set(TOPF.map(f=>f.feature));
+  const featRows=TOPF.map(f=>`<tr class="top"><td>${f.feature}</td><td>${feat[f.feature]==null?'—':feat[f.feature]}</td><td>${(f.importance*100).toFixed(1)}%</td></tr>`).join("");
+  const otherRows=Object.keys(feat).filter(k=>!topset.has(k)).map(k=>`<tr><td>${k}</td><td>${feat[k]==null?'—':feat[k]}</td><td></td></tr>`).join("");
+  const dl2Rows=Object.keys(dl2).map(k=>`<tr><td>${k}</td><td>${dl2[k]==null?'—':dl2[k]}</td></tr>`).join("");
+  const nm=(s.lat!=null&&s.lon!=null)?nearestMines(s.lat,s.lon,25,5):[];
+  const nmRows=nm.length?nm.map(({m,d})=>`<tr><td>${m.n||m.id}</td><td>${m.o||'—'}</td><td>${m.st||''}</td><td>${d.toFixed(1)} km ${bearing(s.lat,s.lon,m.lat,m.lon)}</td></tr>`).join("")
+    :'<tr><td colspan="4" style="color:#888">no MSHA coal mines within 25 km</td></tr>';
+  $("#panel").innerHTML=`<h2>Sample</h2>
+    <div class="geo"><b>${s.id||'—'}</b> · ${s.county||'—'} Co., ${s.state||'—'} · ${s.basin||'—'}</div>
+    <div class="hd"><span class="big">${(s.p_high*100).toFixed(0)}%</span>
+      <span class="pill ${s.pred}">pred: ${s.pred}</span>
+      <span class="pill ${s.split}">${s.split}</span></div>
+    <div class="sub">His XGBoost P(top-50% REE). Actual tier: <b>${s.tier||'—'}</b>. ${s.split==='test'?'held-out':'in training fold'}.</div>
+    <div class="geo">His value: <b>$${s.value==null?'—':s.value.toFixed(2)}/t</b> (whole-coal, his hardcoded prices) · Bed <b>${s.bed||'—'}</b> · Rank <b>${s.rank||'—'}</b> · Ash <b>${s.ash==null?'—':s.ash+'%'}</b> · Thick <b>${s.thick==null?'—':s.thick+'"'}</b></div>
+    <details open><summary>His top features (values for this sample)</summary>
+      <table class="el"><thead><tr><th>Feature</th><th>Value</th><th>Gain</th></tr></thead><tbody>${featRows}</tbody></table></details>
+    <details><summary>DL/2-substituted element values (ppm, whole-coal)</summary>
+      <table class="el"><thead><tr><th>El</th><th>DL/2</th></tr></thead><tbody>${dl2Rows}</tbody></table></details>
+    <details open><summary>Nearest MSHA coal mines (≤25 km) — spatial join, not COALQUAL</summary>
+      <table class="el"><thead><tr><th>Mine</th><th>Operator</th><th>Status</th><th>Dist · bearing</th></tr></thead><tbody>${nmRows}</tbody></table></details>
+    <details><summary>All other features</summary><table class="el"><tbody>${otherRows}</tbody></table></details>
+    <button class="geo-open" onclick="openGeo('${(s.id||'').toString().replace(/[^A-Za-z0-9_-]/g,'')}')">▸ Full geoscience analysis</button>`;
+}
+function buildSide(){
+  const m=META.metrics,s=META.steps;
+  $("#subline").innerHTML=`${META.pipeline}. Treatment: <b>${META.treatment}</b>. Value: ${META.basis}. ${s.labeled_rows.toLocaleString()} labeled samples.`;
+  $("#m_acc").textContent=(m.accuracy*100).toFixed(1)+"%";
+  $("#m_auc").textContent=m.auc.toFixed(3);
+  const cm=m.confusion_matrix,cn=META.class_names;
+  $("#cm").innerHTML=`<table><tr><th></th><th>pred ${cn[0]}</th><th>pred ${cn[1]}</th></tr>
+    <tr><th>actual ${cn[0]}</th><td>${cm[0][0]}</td><td>${cm[0][1]}</td></tr>
+    <tr><th>actual ${cn[1]}</th><td>${cm[1][0]}</td><td>${cm[1][1]}</td></tr></table>`;
+  const cb=s.class_balance;
+  $("#balance").innerHTML=`Class balance (median split): low <b>${cb.low}</b> / high <b>${cb.high}</b> · unlabeled ${cb.NaN}. Train ${s.train_rows} / test ${s.test_rows}.`;
+  TOPF=m.top_features.slice(0,12);
+  const mx=Math.max(...TOPF.map(f=>f.importance));
+  $("#feats").innerHTML=TOPF.map(f=>`<div class="row"><span style="width:64px">${f.feature}</span>
+    <div class="bar" style="width:${f.importance/mx*160}px"></div><span style="color:var(--mut)">${(f.importance*100).toFixed(1)}%</span></div>`).join("");
+}
+function buildCaption(){
+  const m=META.metrics,s=META.steps;
+  $("#caption").innerHTML=`<b>Miles's analysis on its own terms.</b> COALQUAL via the NETL REE &amp; Coal Open Geodatabase, `+
+    `${s.labeled_rows.toLocaleString()} labeled samples (median-split binary target, DL/2 substitution, whole-coal value at his hardcoded prices). `+
+    `<b>His random-split holdout:</b> accuracy <b>${(m.accuracy*100).toFixed(1)}%</b>, ROC AUC <b>${m.auc.toFixed(3)}</b> (train ${s.train_rows} / test ${s.test_rows}). `+
+    `<b>His stated caveat:</b> “${META.his_caveat.split('"')[1]||META.his_caveat}”`;
+}
+
+// ---------- init ----------
+const T="https://server.arcgisonline.com/ArcGIS/rest/services/";
+async function init(){
+  try{
+    const [d,gj,gc,mn,bs]=await Promise.all([
+      fetch("miles_data.json").then(r=>r.json()),
+      fetch("coalfields2.geojson").then(r=>r.json()).catch(()=>fetch("coalfields.geojson").then(r=>r.json()).catch(()=>null)),
+      fetch("geochem.json").then(r=>r.json()).catch(()=>null),
+      fetch("mines.json").then(r=>r.json()).catch(()=>null),
+      fetch("basins.geojson").then(r=>r.json()).catch(()=>null)
+    ]);
+    META=d.meta; DATA=d.samples; coalGeo=gj;
+    if(gc){ GEO=gc.records; GMETA=gc.meta; buildPopulation(); }
+    if(mn){ MINES=mn.mines; }
+    if(bs){ BASINS=bs; }
+    buildSide(); buildCaption(); buildBasinSelect(); buildMineLegend();
+
+    const style={version:8,glyphs:"https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+      sources:{
+        dem:{type:"raster-dem",tiles:["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],encoding:"terrarium",tileSize:256,maxzoom:15,attribution:"AWS Terrain Tiles / SRTM,NED"},
+        esri_lightgray:{type:"raster",tileSize:256,attribution:"Esri",tiles:[T+"Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"]},
+        esri_hillshade:{type:"raster",tileSize:256,attribution:"Esri",tiles:[T+"Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}"]},
+        esri_imagery:{type:"raster",tileSize:256,attribution:"Esri World Imagery",tiles:[T+"World_Imagery/MapServer/tile/{z}/{y}/{x}"]},
+        esri_reference:{type:"raster",tileSize:256,attribution:"Esri",tiles:[T+"Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"]}
+      },
+      layers:[
+        {id:"bg",type:"background",paint:{"background-color":"#dfe6ea"}},
+        {id:"esri_lightgray",type:"raster",source:"esri_lightgray"},
+        {id:"esri_hillshade",type:"raster",source:"esri_hillshade",paint:{"raster-opacity":0.4}},
+        {id:"esri_imagery",type:"raster",source:"esri_imagery",layout:{visibility:"none"}},
+        {id:"esri_reference",type:"raster",source:"esri_reference",layout:{visibility:"none"}}
+      ]};
+    map=new maplibregl.Map({container:"map",style,center:HOME.center,zoom:3.0,pitch:0,bearing:0,
+      minZoom:2.5,maxZoom:14,dragRotate:true,pitchWithRotate:true,antialias:true,maxPitch:80});
+    map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),"top-left");
+    window.__map=map;
+
+    const ambient=new deck.AmbientLight({color:[255,255,255],intensity:1.1});
+    const dir=new deck.DirectionalLight({color:[255,255,255],intensity:1.6,direction:[-1,-3,-1]});
+    const lighting=new deck.LightingEffect({ambient,dir});
+
+    map.on("load",()=>{
+      map.setTerrain({source:"dem",exaggeration:1.4});
+      try{ map.setSky({"sky-color":"#a7c7ff","sky-horizon-blend":0.5,"horizon-color":"#e6ecf0",
+        "horizon-fog-blend":0.6,"fog-color":"#eef2f4","fog-ground-blend":0.4}); }catch(e){}
+      appliedBasemap="terrain"; window.__appliedBasemap="terrain";
+      overlay=new deck.MapboxOverlay({interleaved:false,effects:[lighting],getTooltip:tooltip,layers:[]});
+      map.addControl(overlay);
+      window.__overlay=overlay;
+      updateLayers();
+      map.easeTo({center:HOME.center,zoom:HOME.zoom,pitch:HOME.pitch,bearing:HOME.bearing,duration:3500});
+      map.on("move",()=>{ updateLayers(); refreshBasemap(); });
+      window.__ready=true;
+    });
+    map.on("error",e=>{ const msg=(e&&e.error&&e.error.message)||""; if(msg&&!/tile|abort/i.test(msg)) showErr("map: "+msg); });
+
+    // controls
+    $("#bmseg").querySelectorAll("button").forEach(b=>b.onclick=()=>{
+      userBasemap=b.dataset.m;
+      $("#bmseg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));
+      refreshBasemap();
+    });
+    $("#pitchseg").querySelectorAll("button").forEach(b=>b.onclick=()=>{
+      $("#pitchseg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));
+      map.easeTo({pitch:b.dataset.p==="3d"?HOME.pitch:0,duration:900});
+    });
+    $("#autoimg").onchange=e=>{ autoImagery=e.target.checked; refreshBasemap(); };
+    $("#reset").onclick=()=>map.easeTo({center:HOME.center,zoom:HOME.zoom,pitch:HOME.pitch,bearing:HOME.bearing,duration:1500});
+    $("#geoclose").onclick=closeGeo;
+    document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeGeo(); });
+    $("#tmines").onchange=e=>{ showMines=e.target.checked; updateLayers(); };
+    $("#minefilter").onchange=e=>{ mineFilter=e.target.value; updateLayers(); };
+    $("#tbasins").onchange=e=>{ showBasins=e.target.checked; updateLayers(); };
+    $("#basinsel").onchange=e=>selectBasin(e.target.value);
+  }catch(e){ showErr("init failed: "+e.message); throw e; }
+}
+// ================= GEOSCIENCE PANELS (display-only; from geochem.json) =================
+const SPIDER_ORDER=["La","Ce","Pr","Nd","Sm","Eu","Gd","Tb","Dy","Y","Ho","Er","Tm","Yb","Lu"];
+// reference ppm (chondrite-normalized at plot time). UCC: Rudnick & Gao 2003; coal: Ketris & Yudovich 2009
+const UCC={La:31,Ce:63,Pr:7.1,Nd:27,Sm:4.7,Eu:1.0,Gd:4.0,Tb:0.7,Dy:3.9,Ho:0.83,Er:2.3,Tm:0.30,Yb:1.96,Lu:0.31,Y:21};
+const WCOAL={La:11,Ce:23,Pr:3.4,Nd:12,Sm:2.2,Eu:0.43,Gd:2.7,Tb:0.31,Dy:2.1,Ho:0.57,Er:1.0,Tm:0.30,Yb:1.0,Lu:0.20,Y:8.2};
+const IDX_ROWS=[
+  ["EuEu","Eu/Eu*","ratio"],["CeCe","Ce/Ce*","ratio"],
+  ["LaYb","(La/Yb)N","ratio"],["LaSm","(La/Sm)N","ratio"],["GdYb","(Gd/Yb)N","ratio"],
+  ["LREE_HREE","LREE/HREE","ratio"],["TREE","ΣREE+Y","ppm"],
+  ["seredin","Seredin type","str"],["coutl","C_outl","ratio"]];
+
+function buildPopulation(){
+  POP=[];
+  for(const id in GEO){ const r=GEO[id],x=r.idx_dl2||{};
+    POP.push({basin:r.basin,ash:r.ash,al2o3:r.al2o3,
+      TREE:x.TREE&&x.TREE.v, LaYb:x.LaYb&&x.LaYb.v, LaSm:x.LaSm&&x.LaSm.v,
+      GdYb:x.GdYb&&x.GdYb.v, EuEu:x.EuEu&&x.EuEu.v}); }
+}
+function chond(el){ return GMETA.chondrite[el]; }
+function closeGeo(){ $("#geo").classList.remove("show"); }
+function openGeo(id){
+  const rec=GEO&&GEO[id];
+  $("#geo").classList.add("show");
+  $("#geotitle").textContent="Geoscience analysis — "+(id||"");
+  if(!rec){ $("#geometa").textContent="no geochemistry record for this sample";
+    ["p_spider","p_indices","p_context","p_pop"].forEach(x=>$("#"+x).innerHTML="<div style='color:#a19e93'>No matching geodatabase record.</div>"); return; }
+  const s=DATA.find(x=>String(x.id)===String(id))||{};
+  $("#geometa").textContent=`${s.county||'—'} Co., ${s.state||'—'} · ${rec.basin||'—'} · ${(s.rank||'—')} · his P(high) ${s.p_high!=null?(s.p_high*100).toFixed(0)+'%':'—'}`;
+  renderSpider(rec); renderIndices(rec); renderContext(rec); renderPop(rec);
+}
+
+function renderSpider(rec){
+  const host=$("#p_spider"); host.innerHTML="";
+  $("#spidercap").innerHTML=`Normalized to <b>${GMETA.normalization}</b>. Basis: <b>${GMETA.basis}</b>. `+
+    `Open symbols = below detection (value is the detection limit, not a measurement); % under each element = national censoring rate.`;
+  const W=Math.max(560,host.clientWidth||720),H=360,m={t:14,r:120,b:44,l:52};
+  const svg=d3.select(host).append("svg").attr("width",W).attr("height",H);
+  const x=d3.scalePoint().domain(SPIDER_ORDER).range([m.l,W-m.r]).padding(0.5);
+  const face=[],dl2=[]; const vals=[];
+  for(const el of SPIDER_ORDER){ const e=rec.el[el]||{}; const c=chond(el);
+    const nf=(e.f!=null)?e.f/c:null, nd=(e.d!=null)?e.d/c:null;
+    face.push({el,v:nf,L:!!e.L}); dl2.push({el,v:nd,L:!!e.L});
+    if(nf)vals.push(nf); if(nd)vals.push(nd);}
+  const ucc=SPIDER_ORDER.map(el=>({el,v:UCC[el]/chond(el)})), wc=SPIDER_ORDER.map(el=>({el,v:WCOAL[el]/chond(el)}));
+  ucc.forEach(d=>vals.push(d.v)); wc.forEach(d=>vals.push(d.v));
+  const y=d3.scaleLog().domain([Math.max(0.05,d3.min(vals)*0.7),d3.max(vals)*1.4]).range([H-m.b,m.t]).clamp(true);
+  // grid
+  svg.append("g").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(y).ticks(6,"~g"))
+    .call(g=>g.selectAll(".tick line").clone().attr("x2",W-m.l-m.r).attr("stroke","#eee"));
+  svg.append("text").attr("transform","rotate(-90)").attr("x",-(H/2)).attr("y",14)
+    .attr("text-anchor","middle").attr("font-size",11).attr("fill","#444").text("sample / CI chondrite (log)");
+  const line=d3.line().defined(d=>d.v!=null&&d.v>0).x(d=>x(d.el)).y(d=>y(d.v));
+  // reference lines
+  svg.append("path").datum(ucc).attr("fill","none").attr("stroke","#b9a06a").attr("stroke-width",1).attr("stroke-dasharray","2,2").attr("opacity",.7).attr("d",line);
+  svg.append("path").datum(wc).attr("fill","none").attr("stroke","#7fae8a").attr("stroke-width",1).attr("stroke-dasharray","2,2").attr("opacity",.7).attr("d",line);
+  // face (dashed crimson) + dl2 (solid blue)
+  svg.append("path").datum(face).attr("fill","none").attr("stroke","#c0392b").attr("stroke-width",1.6).attr("stroke-dasharray","6,4").attr("d",line);
+  svg.append("path").datum(dl2).attr("fill","none").attr("stroke","#2a6fb0").attr("stroke-width",1.8).attr("d",line);
+  const pts=(arr,color)=>svg.append("g").selectAll("circle").data(arr.filter(d=>d.v!=null&&d.v>0)).join("circle")
+    .attr("cx",d=>x(d.el)).attr("cy",d=>y(d.v)).attr("r",3.2)
+    .attr("fill",d=>d.L?"#fff":color).attr("stroke",color).attr("stroke-width",1.4);
+  pts(face,"#c0392b"); pts(dl2,"#2a6fb0");
+  // x labels + censoring %
+  const xa=svg.append("g").attr("transform",`translate(0,${H-m.b})`);
+  xa.selectAll("text.el").data(SPIDER_ORDER).join("text").attr("class","el").attr("x",d=>x(d)).attr("y",16)
+    .attr("text-anchor","middle").attr("font-size",11).attr("fill","#222").text(d=>d);
+  xa.selectAll("text.c").data(SPIDER_ORDER).join("text").attr("class","c").attr("x",d=>x(d)).attr("y",30)
+    .attr("text-anchor","middle").attr("font-size",8.5)
+    .attr("fill",d=>{const p=GMETA.censoring_pct[d];return p>50?"#c0392b":p>20?"#d98324":"#9a978a";})
+    .attr("font-weight",d=>GMETA.censoring_pct[d]>50?700:400)
+    .text(d=>{const p=GMETA.censoring_pct[d];return p!=null?p+"%":"";});
+  // legend
+  const lg=svg.append("g").attr("transform",`translate(${W-m.r+10},${m.t+6})`),it=[
+    ["FACE (as reported)","#c0392b","6,4"],["DL/2 (Miles)","#2a6fb0",null],
+    ["UCC","#b9a06a","2,2"],["world coal","#7fae8a","2,2"]];
+  it.forEach((d,i)=>{const g=lg.append("g").attr("transform",`translate(0,${i*16})`);
+    g.append("line").attr("x1",0).attr("x2",18).attr("y1",4).attr("y2",4).attr("stroke",d[1]).attr("stroke-width",1.6).attr("stroke-dasharray",d[2]);
+    g.append("text").attr("x",22).attr("y",7).attr("font-size",10).attr("fill","#333").text(d[0]);});
+  lg.append("text").attr("y",4*16+8).attr("font-size",9).attr("fill","#666").text("○ = below detection");
+}
+
+function renderIndices(rec){
+  const host=$("#p_indices"); const f=rec.idx_face||{},d=rec.idx_dl2||{};
+  const fmt=v=>v==null?"—":(typeof v==="number"?(Math.abs(v)>=100?v.toFixed(0):v.toFixed(2)):v);
+  let rows="";
+  for(const [k,label,kind] of IDX_ROWS){
+    const fo=f[k],doo=d[k];
+    if(!fo&&!doo){ rows+=`<tr><td>${sub(label)}</td><td class="na" colspan="3">n/a</td></tr>`; continue; }
+    const fv=fo?fo.v:null, dv=doo?doo.v:null, cens=(fo&&fo.cens)||(doo&&doo.cens);
+    let delta="";
+    if(kind!=="str"&&typeof fv==="number"&&typeof dv==="number"&&fv!==0) delta=((dv-fv)/Math.abs(fv)*100).toFixed(0)+"%";
+    const extra=(k==="coutl"&&doo&&doo.call)?` <span style="color:#666">(${doo.call})</span>`:"";
+    rows+=`<tr><td>${sub(label)}${cens?' <span class="cflag">‡</span>':''}</td>`+
+      `<td>${fmt(fv)}</td><td>${fmt(dv)}${extra}</td><td style="color:#888">${delta}</td></tr>`;
+  }
+  host.innerHTML=`<table class="idx"><thead><tr><th>Index</th><th>FACE</th><th>DL/2</th><th>Δ</th></tr></thead><tbody>${rows}</tbody></table>`;
+  function sub(l){return l.replace("(La/Yb)N","(La/Yb)<sub>N</sub>").replace("(La/Sm)N","(La/Sm)<sub>N</sub>").replace("(Gd/Yb)N","(Gd/Yb)<sub>N</sub>").replace("Eu/Eu*","Eu/Eu*").replace("Ce/Ce*","Ce/Ce*");}
+}
+
+function scatter(host,pts,sel,xk,yk,xlab,ylab,logx,logy){
+  const W=Math.max(210,host.clientWidth||230),H=200,m={t:8,r:8,b:34,l:44};
+  const svg=d3.select(host).append("svg").attr("width",W).attr("height",H);
+  const P=pts.filter(p=>p[xk]!=null&&p[yk]!=null&&(!logx||p[xk]>0)&&(!logy||p[yk]>0));
+  const x=(logx?d3.scaleLog():d3.scaleLinear()).domain(d3.extent(P,p=>p[xk])).nice().range([m.l,W-m.r]);
+  const y=(logy?d3.scaleLog():d3.scaleLinear()).domain(d3.extent(P,p=>p[yk])).nice().range([H-m.b,m.t]);
+  svg.append("g").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(x).ticks(4,"~g"));
+  svg.append("g").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(y).ticks(4,"~g"));
+  svg.append("text").attr("x",(W)/2).attr("y",H-4).attr("text-anchor","middle").attr("font-size",9.5).attr("fill","#444").html(xlab);
+  svg.append("text").attr("transform","rotate(-90)").attr("x",-H/2).attr("y",11).attr("text-anchor","middle").attr("font-size",9.5).attr("fill","#444").html(ylab);
+  svg.append("g").selectAll("circle").data(P).join("circle").attr("cx",p=>x(p[xk])).attr("cy",p=>y(p[yk]))
+    .attr("r",1.5).attr("fill",p=>p.basin===sel.basin?"#2a6fb0":"#c9c6b8").attr("opacity",p=>p.basin===sel.basin?.75:.4);
+  if(sel[xk]!=null&&sel[yk]!=null&&(!logx||sel[xk]>0)&&(!logy||sel[yk]>0))
+    svg.append("path").attr("d",d3.symbol(d3.symbolDiamond,90)()).attr("transform",`translate(${x(sel[xk])},${y(sel[yk])})`)
+      .attr("fill","#c0392b").attr("stroke","#fff").attr("stroke-width",1);
+}
+function renderContext(rec){
+  const host=$("#p_context"); host.innerHTML="";
+  const d=rec.idx_dl2||{};
+  const sel={basin:rec.basin,ash:rec.ash,al2o3:rec.al2o3,
+    TREE:d.TREE&&d.TREE.v,LaYb:d.LaYb&&d.LaYb.v,LaSm:d.LaSm&&d.LaSm.v,GdYb:d.GdYb&&d.GdYb.v,EuEu:d.EuEu&&d.EuEu.v};
+  const grid=d3.select(host).append("div").style("display","grid").style("grid-template-columns","1fr 1fr").style("gap","8px").node();
+  // ternary
+  const tern=document.createElement("div"); grid.appendChild(tern);
+  ternary(tern,POP,sel);
+  const b1=document.createElement("div"),b2=document.createElement("div"),b3=document.createElement("div");
+  grid.appendChild(b1);grid.appendChild(b2);grid.appendChild(b3);
+  scatter(b1,POP,sel,"ash","TREE","ash yield (%)","ΣREE+Y (ppm)",false,true);
+  scatter(b2,POP,sel,"al2o3","TREE","Al<tspan baseline-shift='sub'>2</tspan>O<tspan baseline-shift='sub'>3</tspan> (%)","ΣREE+Y (ppm)",false,true);
+  scatter(b3,POP,sel,"LaYb","EuEu","(La/Yb)<tspan baseline-shift='sub'>N</tspan>","Eu/Eu*",true,false);
+}
+function ternary(host,pts,sel){
+  const S=230,m=26,svg=d3.select(host).append("svg").attr("width",S).attr("height",S);
+  const A=[m,S-m],B=[S-m,S-m],C=[S/2,m]; // La/Yb(bottom-left), La/Sm(bottom-right), Gd/Yb(top)
+  const proj=(a,b,c)=>{const t=a+b+c;if(!t)return null;a/=t;b/=t;c/=t;
+    return [a*A[0]+b*B[0]+c*C[0], a*A[1]+b*B[1]+c*C[1]];};
+  svg.append("polygon").attr("points",`${A} ${B} ${C}`).attr("fill","#faf9f4").attr("stroke","#bbb");
+  const lab=(p,t,dx,dy)=>svg.append("text").attr("x",p[0]+dx).attr("y",p[1]+dy).attr("font-size",9).attr("fill","#555").attr("text-anchor","middle").text(t);
+  lab(A,"(La/Yb)N",-2,14); lab(B,"(La/Sm)N",0,14); lab(C,"(Gd/Yb)N",0,-6);
+  svg.append("g").selectAll("circle").data(pts.filter(p=>p.LaYb>0&&p.LaSm>0&&p.GdYb>0)).join("circle")
+    .each(function(p){const q=proj(p.LaYb,p.LaSm,p.GdYb);if(q)d3.select(this).attr("cx",q[0]).attr("cy",q[1]);})
+    .attr("r",1.4).attr("fill",p=>p.basin===sel.basin?"#2a6fb0":"#cfccbe").attr("opacity",p=>p.basin===sel.basin?.75:.4);
+  if(sel.LaYb>0&&sel.LaSm>0&&sel.GdYb>0){const q=proj(sel.LaYb,sel.LaSm,sel.GdYb);
+    if(q)svg.append("path").attr("d",d3.symbol(d3.symbolDiamond,100)()).attr("transform",`translate(${q[0]},${q[1]})`).attr("fill","#c0392b").attr("stroke","#fff");}
+  svg.append("text").attr("x",S/2).attr("y",S-6).attr("text-anchor","middle").attr("font-size",8.5).attr("fill","#888").text("REE-fractionation ternary");
+}
+
+function box(svg,y0,arr,xs,label,face,dl2){
+  const a=arr.filter(v=>v!=null&&v>0).sort(d3.ascending);if(!a.length)return;
+  const q1=d3.quantile(a,.25),md=d3.quantile(a,.5),q3=d3.quantile(a,.75),lo=d3.quantile(a,.05),hi=d3.quantile(a,.95);
+  const h=13;
+  svg.append("line").attr("x1",xs(lo)).attr("x2",xs(hi)).attr("y1",y0).attr("y2",y0).attr("stroke","#999");
+  svg.append("rect").attr("x",xs(q1)).attr("width",Math.max(1,xs(q3)-xs(q1))).attr("y",y0-h/2).attr("height",h).attr("fill","#e7e4d6").attr("stroke","#999");
+  svg.append("line").attr("x1",xs(md)).attr("x2",xs(md)).attr("y1",y0-h/2).attr("y2",y0+h/2).attr("stroke","#333");
+  svg.append("text").attr("x",6).attr("y",y0+3).attr("font-size",9.5).attr("fill","#444").text(label);
+  const pctl=v=>v==null?null:Math.round(100*d3.bisect(a,v)/a.length);
+  if(dl2!=null&&dl2>0){svg.append("circle").attr("cx",xs(dl2)).attr("cy",y0).attr("r",4).attr("fill","#2a6fb0").attr("stroke","#fff");}
+  if(face!=null&&face>0){svg.append("circle").attr("cx",xs(face)).attr("cy",y0).attr("r",4).attr("fill","none").attr("stroke","#c0392b").attr("stroke-width",1.6);}
+  return {face:pctl(face),dl2:pctl(dl2)};
+}
+function renderPop(rec){
+  const host=$("#p_pop"); host.innerHTML="";
+  const fT=rec.idx_face&&rec.idx_face.TREE&&rec.idx_face.TREE.v, dT=rec.idx_dl2&&rec.idx_dl2.TREE&&rec.idx_dl2.TREE.v;
+  const nat=POP.map(p=>p.TREE), bas=POP.filter(p=>p.basin===rec.basin).map(p=>p.TREE);
+  const W=Math.max(300,host.clientWidth||330),H=130,m={l:70,r:14};
+  const all=nat.filter(v=>v!=null&&v>0);
+  const xs=d3.scaleLog().domain([d3.min(all)*0.9,d3.max(all)*1.1]).range([m.l,W-m.r]);
+  const svg=d3.select(host).append("svg").attr("width",W).attr("height",H);
+  svg.append("g").attr("transform",`translate(0,${H-24})`).call(d3.axisBottom(xs).ticks(5,"~g"));
+  svg.append("text").attr("x",W/2).attr("y",H-4).attr("text-anchor","middle").attr("font-size",9.5).attr("fill","#444").text("ΣREE+Y (ppm, log) — ○ FACE  ● DL/2");
+  const pN=box(svg,34,nat,xs,"National",fT,dT);
+  const pB=box(svg,70,bas,xs,(rec.basin||"basin").slice(0,14),fT,dT);
+  $("#popcap").innerHTML=`ΣREE+Y percentile — National: FACE <b>${pN&&pN.face!=null?pN.face:'—'}</b> → DL/2 <b>${pN&&pN.dl2!=null?pN.dl2:'—'}</b> · `+
+    `${(rec.basin||'basin')}: FACE <b>${pB&&pB.face!=null?pB.face:'—'}</b> → DL/2 <b>${pB&&pB.dl2!=null?pB.dl2:'—'}</b> (n=${bas.length}).`;
+}
+
+document.addEventListener("DOMContentLoaded",init);
+</script>
+</body>
+</html>

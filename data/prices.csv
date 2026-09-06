@@ -1,0 +1,31 @@
+# REE / critical-mineral prices — provenance
+# Sourced from the dnmining repo (Jack): data/raw/prices.csv, copied verbatim.
+# Prices are per KG OF OXIDE (price_usd_per_kg_oxide); oxide_factor = kg oxide per kg element
+#   => price per kg ELEMENT = price_usd_per_kg_oxide * oxide_factor.
+# Per-row source / date / confidence are retained.
+# LOW-CONFIDENCE flags to respect on the map (see CHANGES.md CHANGE 4):
+#   - REE placeholders: Eu, Gd, Ho, Er, Tm, Yb, Lu, Y (thin/spot or placeholder quotes)
+#   - Basket metals: Ge, Ga, Li, Co, Be — Ge especially uncertain ($3,000–6,350/kg spread; 3000 used here)
+# Read at call time via util/prices.py; do NOT hardcode prices in code.
+element,oxide,oxide_factor,price_usd_per_kg_oxide,basis,source,date,confidence
+La,La2O3,1.1728,0.63,SMM_domestic,SunSirs,2026-02-02,
+Ce,CeO2,1.2284,3.14,SMM_domestic,SunSirs,2026-02-02,
+Pr,Pr6O11,1.2082,125,CIF_NA,Platts,2026-03-31,
+Nd,Nd2O3,1.1664,125,CIF_NA,Platts,2026-03-31,
+Sm,Sm2O3,1.1596,175,CIF_NA,Platts,2026-03-31,
+Eu,Eu2O3,1.1579,30,,placeholder,,low
+Gd,Gd2O3,1.1526,40,,placeholder,,low
+Tb,Tb4O7,1.1762,4900,CIF_NA,Platts,2026-03-31,
+Dy,Dy2O3,1.1477,1200,CIF_NA,Platts,2026-03-31,
+Ho,Ho2O3,1.1455,90,,placeholder,,low
+Er,Er2O3,1.1435,40,,placeholder,,low
+Tm,Tm2O3,1.1421,800,,placeholder,,low
+Yb,Yb2O3,1.1387,50,,placeholder,,low
+Lu,Lu2O3,1.1372,800,,placeholder,,low
+Y,Y2O3,1.2699,21,spot,,,low
+Sc,Sc2O3,1.5338,507,SMM_domestic,SMM_GuideChem,2026-09-05,
+Ge,Ge,1.0,3000,metal_element,SMM_domestic_and_US_warehouse_range,2026-08-01,low
+Ga,Ga,1.0,500,metal_element,IEA_Argus_export_controlled,2025-01-01,low
+Li,Li,1.0,60,metal_element,LCE_derived,2025-06-01,low
+Co,Co,1.0,40,metal_element,LME,2025-06-01,medium
+Be,Be,1.0,850,metal_element,Materion_reference,2025-01-01,low

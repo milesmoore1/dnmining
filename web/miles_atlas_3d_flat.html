@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Miles's pipeline — 3D baseline (deck.gl + MapLibre)</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/deck.gl@9.0.38/dist.min.js"></script>
+<style>
+  :root{ --bg:#12140f; --panel:#1b1e17; --ink:#eceadf; --mut:#9a978a; --line:#33372c; --accent:#5598e7; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:13px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  #app{display:grid;grid-template-columns:1fr 360px;grid-template-rows:1fr auto;height:100vh}
+  #map{grid-row:1;grid-column:1;position:relative;background:#e8e6df}
+  #side{grid-row:1;grid-column:2;background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;padding:12px 14px}
+  #caption{grid-row:2;grid-column:1/3;background:#0c0d09;border-top:1px solid var(--line);padding:7px 14px;font-size:11.5px;color:var(--mut)}
+  #caption b{color:var(--ink)}
+  h1{font-size:15px;margin:2px 0 2px}
+  .sub{color:var(--mut);font-size:11px;margin-bottom:8px}
+  .grp{border-top:1px solid var(--line);padding:10px 0}
+  .grp h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin:0 0 7px}
+  .metrics{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .metric{background:#242820;border:1px solid var(--line);border-radius:5px;padding:6px 8px}
+  .metric b{font-size:18px;color:var(--accent)}.metric span{display:block;font-size:10px;color:var(--mut)}
+  .cm{font-size:11px;margin-top:6px}
+  .cm table{border-collapse:collapse}.cm td,.cm th{border:1px solid var(--line);padding:3px 8px;text-align:center}
+  .feats{font-size:11.5px}.feats .row{display:flex;align-items:center;gap:6px;margin:2px 0}
+  .feats .bar{height:9px;background:var(--accent);border-radius:2px}
+  #legend{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mut);margin-top:6px}
+  #legbar{height:10px;flex:1;border-radius:3px;background:linear-gradient(90deg,#440154,#3b528b,#21918c,#5ec962,#fde725)}
+  .none{color:var(--mut);font-style:italic}
+  .hd{display:flex;align-items:baseline;gap:10px;margin:4px 0}
+  .hd .big{font-size:26px;font-weight:700;color:var(--accent)}
+  .pill{font-size:10px;border-radius:3px;padding:1px 6px;font-weight:600}
+  .pill.high{background:#d7191c;color:#fff}.pill.low{background:#2c7bb6;color:#fff}
+  .pill.test{background:#3a3f30;color:#cfc}.pill.train{background:#2a2d22;color:#9a978a}
+  .geo{font-size:11.5px;color:var(--mut)}.geo b{color:var(--ink)}
+  table.el{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px}
+  table.el th,table.el td{text-align:right;padding:2px 4px;border-bottom:1px solid #23261e}
+  table.el th:first-child,table.el td:first-child{text-align:left}
+  tr.top td{color:var(--accent)}
+  details summary{cursor:pointer;color:var(--mut);font-size:11px;margin-top:8px}
+  #reset{position:absolute;z-index:5;top:10px;right:10px;background:#1b1e17cc;color:var(--ink);
+    border:1px solid var(--line);border-radius:5px;padding:6px 10px;cursor:pointer;font-size:12px}
+  #err{position:absolute;z-index:9999;top:8px;left:8px;background:#5a1414;color:#fff;padding:8px 10px;border-radius:5px;max-width:60%;display:none}
+  .maplibregl-ctrl-attrib{font-size:9px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="map"><button id="reset">⟲ reset view</button><div id="err"></div></div>
+  <div id="side">
+    <h1>Miles's pipeline — 3D baseline</h1>
+    <div class="sub" id="subline"></div>
+    <div class="grp">
+      <h2>His model — random holdout</h2>
+      <div class="metrics">
+        <div class="metric"><b id="m_acc">–</b><span>accuracy (test)</span></div>
+        <div class="metric"><b id="m_auc">–</b><span>ROC AUC</span></div>
+      </div>
+      <div class="cm" id="cm"></div>
+      <div class="sub" id="balance" style="margin-top:6px"></div>
+    </div>
+    <div class="grp">
+      <h2>His top features (XGBoost gain)</h2>
+      <div class="feats" id="feats"></div>
+    </div>
+    <div class="grp">
+      <h2>Height &amp; colour = predicted P(top-50% REE)</h2>
+      <div id="legend"><span>0</span><div id="legbar"></div><span>1</span></div>
+      <div class="sub" style="margin-top:6px">Extruded hexagons aggregate his samples (mean P(high)); above zoom 6 they fade to individual points. One treatment (DL/2) — all his pipeline computes. Aggregation only, no interpolation. Right-drag / ctrl-drag to rotate &amp; pitch.</div>
+    </div>
+    <div class="grp" id="panel">
+      <h2>Sample</h2>
+      <div class="none">Click a hexagon or point (zoom in for individual samples).</div>
+    </div>
+  </div>
+  <div id="caption"></div>
+</div>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+function showErr(m){const e=$("#err");e.style.display="block";e.textContent="⚠ "+m;console.error(m);}
+window.addEventListener("error",e=>showErr(e.message));
+
+let DATA,META,TOPF=[],map,overlay,coalGeo=null;
+const HOME={center:[-95,38],zoom:3.7,pitch:45,bearing:-18};
+const VIRIDIS=[[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
+function lerp(a,b,t){return a+(b-a)*t;}
+function colorFor(p){const t=Math.max(0,Math.min(1,p)),seg=t*(VIRIDIS.length-1),i=Math.floor(seg),f=seg-i;
+  const a=VIRIDIS[i],b=VIRIDIS[Math.min(i+1,VIRIDIS.length-1)];
+  return [Math.round(lerp(a[0],b[0],f)),Math.round(lerp(a[1],b[1],f)),Math.round(lerp(a[2],b[2],f))];}
+const COLOR_RANGE=[[68,1,84],[59,82,139],[33,145,140],[94,201,98],[173,220,66],[253,231,37]];
+
+// ---------- deck layers ----------
+function coalLayer(){
+  if(!coalGeo) return null;
+  return new deck.GeoJsonLayer({id:"coal",data:coalGeo,stroked:true,filled:true,
+    getLineColor:[120,116,96,140],getFillColor:[150,146,120,18],lineWidthMinPixels:1,pickable:false});
+}
+function hexLayer(op){
+  return new deck.HexagonLayer({id:"hex",data:DATA,
+    getPosition:d=>[d.lon,d.lat],
+    radius:26000, coverage:0.92, extruded:true,
+    elevationScale:95000, elevationRange:[0,1],
+    colorAggregation:"MEAN", getColorWeight:d=>d.p_high, colorDomain:[0,1], colorRange:COLOR_RANGE,
+    elevationAggregation:"MEAN", getElevationWeight:d=>d.p_high,
+    opacity:op, pickable:true,
+    material:{ambient:0.45,diffuse:0.65,shininess:24,specularColor:[40,40,40]},
+    onSetElevationDomain:d=>{window.__elevDomain=d;},
+    onClick:info=>{const pts=info&&info.object&&info.object.points;if(pts&&pts.length){
+      let best=pts[0].source||pts[0],bv=-1;
+      for(const pp of pts){const s=pp.source||pp;if(s.p_high>bv){bv=s.p_high;best=s;}}
+      selectSample(best);}},
+    transitions:{elevationScale:600}});
+}
+function scatterLayer(op){
+  return new deck.ScatterplotLayer({id:"pts",data:DATA,
+    getPosition:d=>[d.lon,d.lat],
+    getFillColor:d=>colorFor(d.p_high),getLineColor:[20,20,20,180],lineWidthMinPixels:0.5,stroked:true,
+    radiusUnits:"pixels",getRadius:5,radiusMinPixels:3,radiusMaxPixels:7,
+    opacity:op,pickable:true,
+    onClick:info=>{if(info&&info.object)selectSample(info.object);}});
+}
+function updateLayers(){
+  if(!overlay)return;
+  const z=map.getZoom();
+  const scatterOp=Math.max(0,Math.min(1,z-6));   // crossfade over zoom 6->7
+  const hexOp=1-scatterOp;
+  const layers=[];
+  const c=coalLayer(); if(c)layers.push(c);
+  if(hexOp>0.01)layers.push(hexLayer(hexOp));
+  if(scatterOp>0.01)layers.push(scatterLayer(scatterOp));
+  window.__activeLayerIds=layers.map(l=>l.id);
+  overlay.setProps({layers});
+}
+function tooltip({object,layer}){
+  if(!object)return null;
+  if(layer&&layer.id==="hex"){
+    const n=object.points?object.points.length:0;
+    const mean=(object.colorValue!=null?object.colorValue:object.elevationValue);
+    return {html:`<b>${n}</b> samples<br/>mean P(high): <b>${(mean*100).toFixed(0)}%</b>`,
+      style:{background:"#1b1e17",color:"#eceadf",fontSize:"11px",padding:"5px 7px",borderRadius:"4px"}};
+  }
+  return {html:`<b>${object.id||"sample"}</b><br/>P(high): <b>${(object.p_high*100).toFixed(0)}%</b>`,
+    style:{background:"#1b1e17",color:"#eceadf",fontSize:"11px",padding:"5px 7px",borderRadius:"4px"}};
+}
+
+// ---------- sidebar / panel / caption (unchanged from miles_atlas.html) ----------
+function selectSample(s){
+  const feat=s.feat||{},dl2=s.dl2||{};
+  const topset=new Set(TOPF.map(f=>f.feature));
+  const featRows=TOPF.map(f=>`<tr class="top"><td>${f.feature}</td><td>${feat[f.feature]==null?'—':feat[f.feature]}</td><td>${(f.importance*100).toFixed(1)}%</td></tr>`).join("");
+  const otherRows=Object.keys(feat).filter(k=>!topset.has(k)).map(k=>`<tr><td>${k}</td><td>${feat[k]==null?'—':feat[k]}</td><td></td></tr>`).join("");
+  const dl2Rows=Object.keys(dl2).map(k=>`<tr><td>${k}</td><td>${dl2[k]==null?'—':dl2[k]}</td></tr>`).join("");
+  $("#panel").innerHTML=`<h2>Sample</h2>
+    <div class="geo"><b>${s.id||'—'}</b> · ${s.county||'—'} Co., ${s.state||'—'} · ${s.basin||'—'}</div>
+    <div class="hd"><span class="big">${(s.p_high*100).toFixed(0)}%</span>
+      <span class="pill ${s.pred}">pred: ${s.pred}</span>
+      <span class="pill ${s.split}">${s.split}</span></div>
+    <div class="sub">His XGBoost P(top-50% REE). Actual tier: <b>${s.tier||'—'}</b>. ${s.split==='test'?'held-out':'in training fold'}.</div>
+    <div class="geo">His value: <b>$${s.value==null?'—':s.value.toFixed(2)}/t</b> (whole-coal, his hardcoded prices) · Bed <b>${s.bed||'—'}</b> · Rank <b>${s.rank||'—'}</b> · Ash <b>${s.ash==null?'—':s.ash+'%'}</b> · Thick <b>${s.thick==null?'—':s.thick+'"'}</b></div>
+    <details open><summary>His top features (values for this sample)</summary>
+      <table class="el"><thead><tr><th>Feature</th><th>Value</th><th>Gain</th></tr></thead><tbody>${featRows}</tbody></table></details>
+    <details><summary>DL/2-substituted element values (ppm, whole-coal)</summary>
+      <table class="el"><thead><tr><th>El</th><th>DL/2</th></tr></thead><tbody>${dl2Rows}</tbody></table></details>
+    <details><summary>All other features</summary><table class="el"><tbody>${otherRows}</tbody></table></details>`;
+}
+function buildSide(){
+  const m=META.metrics,s=META.steps;
+  $("#subline").innerHTML=`${META.pipeline}. Treatment: <b>${META.treatment}</b>. Value: ${META.basis}. ${s.labeled_rows.toLocaleString()} labeled samples.`;
+  $("#m_acc").textContent=(m.accuracy*100).toFixed(1)+"%";
+  $("#m_auc").textContent=m.auc.toFixed(3);
+  const cm=m.confusion_matrix,cn=META.class_names;
+  $("#cm").innerHTML=`<table><tr><th></th><th>pred ${cn[0]}</th><th>pred ${cn[1]}</th></tr>
+    <tr><th>actual ${cn[0]}</th><td>${cm[0][0]}</td><td>${cm[0][1]}</td></tr>
+    <tr><th>actual ${cn[1]}</th><td>${cm[1][0]}</td><td>${cm[1][1]}</td></tr></table>`;
+  const cb=s.class_balance;
+  $("#balance").innerHTML=`Class balance (median split): low <b>${cb.low}</b> / high <b>${cb.high}</b> · unlabeled ${cb.NaN}. Train ${s.train_rows} / test ${s.test_rows}.`;
+  TOPF=m.top_features.slice(0,12);
+  const mx=Math.max(...TOPF.map(f=>f.importance));
+  $("#feats").innerHTML=TOPF.map(f=>`<div class="row"><span style="width:64px">${f.feature}</span>
+    <div class="bar" style="width:${f.importance/mx*160}px"></div><span style="color:var(--mut)">${(f.importance*100).toFixed(1)}%</span></div>`).join("");
+}
+function buildCaption(){
+  const m=META.metrics,s=META.steps;
+  $("#caption").innerHTML=`<b>Miles's analysis on its own terms.</b> COALQUAL via the NETL REE &amp; Coal Open Geodatabase, `+
+    `${s.labeled_rows.toLocaleString()} labeled samples (median-split binary target, DL/2 substitution, whole-coal value at his hardcoded prices). `+
+    `<b>His random-split holdout:</b> accuracy <b>${(m.accuracy*100).toFixed(1)}%</b>, ROC AUC <b>${m.auc.toFixed(3)}</b> (train ${s.train_rows} / test ${s.test_rows}). `+
+    `<b>His stated caveat:</b> “${META.his_caveat.split('"')[1]||META.his_caveat}”`;
+}
+
+// ---------- init ----------
+async function init(){
+  try{
+    const [d,gj]=await Promise.all([
+      fetch("miles_data.json").then(r=>r.json()),
+      fetch("coalfields.geojson").then(r=>r.json()).catch(()=>null)
+    ]);
+    META=d.meta; DATA=d.samples; coalGeo=gj;
+    buildSide(); buildCaption();
+
+    const style={version:8,glyphs:"https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+      sources:{esri:{type:"raster",tileSize:256,attribution:"Esri, USGS",
+        tiles:["https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"]}},
+      layers:[{id:"bg",type:"background",paint:{"background-color":"#e8e6df"}},
+              {id:"esri",type:"raster",source:"esri"}]};
+    map=new maplibregl.Map({container:"map",style,center:HOME.center,zoom:3.0,pitch:0,bearing:0,
+      minZoom:2.5,maxZoom:11,dragRotate:true,pitchWithRotate:true,antialias:true});
+    map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),"top-left");
+    window.__map=map;
+
+    const ambient=new deck.AmbientLight({color:[255,255,255],intensity:1.1});
+    const dir=new deck.DirectionalLight({color:[255,255,255],intensity:1.6,direction:[-1,-3,-1]});
+    const lighting=new deck.LightingEffect({ambient,dir});
+
+    map.on("load",()=>{
+      overlay=new deck.MapboxOverlay({interleaved:false,effects:[lighting],getTooltip:tooltip,layers:[]});
+      map.addControl(overlay);
+      window.__overlay=overlay;
+      updateLayers();
+      map.easeTo({center:HOME.center,zoom:HOME.zoom,pitch:HOME.pitch,bearing:HOME.bearing,duration:3500});
+      map.on("move",updateLayers);
+      window.__ready=true;
+    });
+    map.on("error",e=>{ const msg=(e&&e.error&&e.error.message)||""; if(msg&&!/tile/i.test(msg)) showErr("map: "+msg); });
+    $("#reset").onclick=()=>map.easeTo({center:HOME.center,zoom:HOME.zoom,pitch:HOME.pitch,bearing:HOME.bearing,duration:1500});
+  }catch(e){ showErr("init failed: "+e.message); throw e; }
+}
+document.addEventListener("DOMContentLoaded",init);
+</script>
+</body>
+</html>
