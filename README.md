@@ -3,6 +3,18 @@
 Explore `ree-and-coal-open-geodatabase.gdb` with GeoPandas in
 `geodatabase_explorer.ipynb`.
 
+## Project structure
+
+- `geodatabase_explorer.ipynb`: run the analysis from top to bottom.
+- `util/config.py`: layer names, columns, reference values, label assumptions, and model settings.
+- `util/data_preparation.py`: load/select data, fill missing REEs, build labels, and join samples.
+- `util/qualifiers.py`: measurement-qualifier substitutions.
+- `util/ree_interpolation.py`: row-level REE interpolation.
+- `util/modeling.py`: train/test preparation and metric reporting.
+- `util/plotting.py`: diagnostic charts and their visual defaults.
+
+Restart the notebook kernel after editing utility modules, then run all cells.
+
 ## Python environment
 
 Requires Python 3.12. Dependencies match the existing working notebook
